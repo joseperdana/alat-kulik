@@ -279,6 +279,7 @@ async function openSong(id) {
   song.sheet.sections ||= [];
   state.song = song;
   state.loadedAt = song.updated_at;
+  clearUndo();
   // Langsung aktifkan bagian pertama yang belum ditandai → bisa langsung tekan Mulai/Selesai.
   state.activeId = song.sheet.sections.find((s) => s.start == null || s.end == null)?.id ?? null;
   state.dirty = false;
@@ -295,6 +296,7 @@ async function leaveSong() {
   player?.empty();
   if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
   Object.assign(state, { song: null, activeId: null, audioUrl: null, audioPath: null, currentSecId: null, currentLineId: null });
+  clearUndo();
   $('#now').hidden = true;
 }
 
@@ -343,6 +345,8 @@ function ensurePlayer() {
     },
     onRangeEdit: (id, start, end) => {
       let t = findTarget(id);
+      if (t && t.obj.start === start && t.obj.end === end) return;
+      if (t) recordRange(`${targetName(t)} digeser`, t.obj);
       if (!t) {
         // Belum ada yang aktif: buat baris baru di bagian terakhir.
         if (!sections().length) sections().push(newSection('Bagian 1', []));
@@ -352,6 +356,7 @@ function ensurePlayer() {
         state.activeId = line.id;
         renderSheet();
         t = findTarget(line.id);
+        recordRange('Rentang baru', t.obj);
       }
       t.obj.start = start;
       t.obj.end = end;
@@ -542,14 +547,75 @@ function setActive(id) {
   redraw();
 }
 
+const targetName = (t) => (t.kind === 'sec' ? t.obj.name || 'Bagian' : `${t.section.name || 'Bagian'} · baris ${t.index + 1}`);
+
 function updateActiveLabel() {
   const t = findTarget(state.activeId);
+  const editing = player?.editMode;
   $('#active-label').textContent = !t
-    ? 'Pilih bagian atau baris untuk ditandai'
-    : t.kind === 'sec'
-      ? `Bagian: ${t.obj.name || 'tanpa nama'}`
-      : `${t.section.name || 'Bagian'} · baris ${t.index + 1}`;
+    ? editing
+      ? '✎ Mode edit: pilih kotak di waveform atau drag untuk membuat rentang'
+      : 'Pilih bagian atau baris untuk ditandai'
+    : editing
+      ? `✎ ${targetName(t)}: geser kotak / tarik ujungnya`
+      : t.kind === 'sec'
+        ? `Bagian: ${t.obj.name || 'tanpa nama'}`
+        : targetName(t);
 }
+
+// ---------- Urungkan (undo) perubahan detik ----------
+const undoStack = [];
+function recordRange(label, ...objs) {
+  const items = objs.filter(Boolean).map((o) => ({ id: o.id, start: o.start ?? null, end: o.end ?? null }));
+  if (!items.length) return;
+  // Klik −/+ berturut-turut pada kotak yang sama dihitung satu langkah.
+  const key = `${label}|${items.map((i) => i.id).join(',')}`;
+  const last = undoStack.at(-1);
+  if (last && last.key === key && label.startsWith('Geser halus') && Date.now() - last.at < 1500) {
+    last.at = Date.now();
+    return;
+  }
+  undoStack.push({ label, items, key, at: Date.now() });
+  if (undoStack.length > 100) undoStack.shift();
+  updateUndoBtn();
+}
+function updateUndoBtn() {
+  const last = undoStack.at(-1);
+  $('#undo').disabled = !last;
+  $('#undo').title = last ? `Urungkan: ${last.label} (Cmd/Ctrl+Z)` : 'Belum ada yang bisa diurungkan';
+}
+function clearUndo() {
+  undoStack.length = 0;
+  updateUndoBtn();
+}
+function undo() {
+  const step = undoStack.pop();
+  updateUndoBtn();
+  if (!step || !state.song) return;
+  for (const it of step.items) {
+    const t = findTarget(it.id);
+    if (!t) continue;
+    t.obj.start = it.start;
+    t.obj.end = it.end;
+    refreshTimes(t.obj);
+  }
+  const first = findTarget(step.items[0].id);
+  if (first) setActive(first.obj.id);
+  redraw();
+  markDirty();
+  const o = first?.obj;
+  toast(`Diurungkan: ${step.label}${o ? ` → ${fmt(o.start) || '–'} s/d ${fmt(o.end) || '–'}` : ''}`);
+}
+$('#undo').addEventListener('click', undo);
+
+$('#edit-mode').addEventListener('click', (e) => {
+  if (!player) return;
+  const on = !player.editMode;
+  e.currentTarget.setAttribute('aria-pressed', String(on));
+  player.setEditMode(on);
+  updateActiveLabel();
+  if (on) toast('Mode edit: geser kotak aktif atau tarik ujungnya. Matikan lagi untuk bebas klik di waveform.', 4000);
+});
 
 function redraw() {
   if (!(player && state.song && player.duration)) return;
@@ -590,7 +656,8 @@ sheetEl.addEventListener('change', (e) => {
   const v = parseTime(t.value);
   if (v === undefined) {
     toast('Format waktu: 1:23.4 atau 83.4');
-  } else {
+  } else if (v !== obj[t.dataset.t]) {
+    recordRange(`${targetName(findTarget(obj.id))} diketik`, obj);
     obj[t.dataset.t] = v;
     markDirty();
   }
@@ -618,6 +685,7 @@ sheetEl.addEventListener('click', (e) => {
     const f = b.dataset.f;
     const o = target.obj;
     const base = o[f] ?? player.time;
+    recordRange(`Geser halus ${targetName(target)}`, o);
     o[f] = Math.max(0, Math.round((base + Number(b.dataset.d)) * 10) / 10);
     refreshTimes(o);
     redraw();
@@ -696,6 +764,8 @@ function mark(field) {
   const o = target.obj;
   const t = Math.round(player.time * 10) / 10;
   if (field === 'end' && o.start != null && o.start >= t) return toast('Detik selesai harus setelah detik mulai.');
+  const nextBefore = field === 'end' ? nextTarget(target) : null;
+  recordRange(`Tandai ${field === 'start' ? 'mulai' : 'selesai'} ${targetName(target)}`, o, nextBefore);
   o[field] = t;
   if (field === 'start' && o.end != null && o.end <= t) o.end = null;
   refreshTimes(o);
@@ -718,8 +788,14 @@ $('#mark-start').addEventListener('click', () => mark('start'));
 $('#mark-end').addEventListener('click', () => mark('end'));
 
 document.addEventListener('keydown', (e) => {
+  // Cmd/Ctrl+Z di luar kolom teks = urungkan perubahan detik (di kolom teks tetap undo teks biasa).
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !$('#view-song').hidden) {
+    if (e.target instanceof Element && e.target.closest('input, textarea')) return;
+    e.preventDefault();
+    return undo();
+  }
   if (e.code !== 'Space' || $('#view-song').hidden) return;
-  if (e.target.closest('input, textarea, select, button, summary')) return;
+  if (e.target instanceof Element && e.target.closest('input, textarea, select, button, summary')) return;
   e.preventDefault();
   player?.toggle();
 });
@@ -832,6 +908,7 @@ async function reloadSong() {
   fresh.sheet ||= { sections: [] };
   state.song = fresh;
   state.loadedAt = fresh.updated_at;
+  clearUndo();
   state.dirty = false;
   if (!findTarget(state.activeId)) state.activeId = null;
   setSync('saved');

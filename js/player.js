@@ -29,8 +29,11 @@ export function createPlayer(container, { strip, onTime, onState, onRangeEdit, o
   let zoom = 0;
   let activeId = null;
   let suppressCreate = false;
-
-  regions.enableDragSelection({ color: css('--region-active') }, 4);
+  let lastItems = [];
+  // Mode navigasi (bawaan): klik/drag di waveform hanya memindahkan garis putar.
+  // Mode edit: kotak rentang bisa digeser/ditarik, drag di area kosong membuat rentang.
+  let editMode = false;
+  let stopDragSelection = null;
 
   ws.on('timeupdate', (t) => {
     if (range && t >= range.end) {
@@ -90,10 +93,30 @@ export function createPlayer(container, { strip, onTime, onState, onRangeEdit, o
     r.remove();
     onRangeEdit?.(activeId, round(r.start), round(r.end));
   });
+  // Saat kotak digeser utuh (bukan ditarik ujungnya), geseran dipotong tepat di batas lagu:
+  // kotak mentok di ujung dengan panjang tetap, tidak mengecil.
+  // (Menimpa _onUpdate milik region wavesurfer 7.12.12 — versi dikunci di import.)
+  regions.on('region-initialized', (r) => {
+    const orig = r._onUpdate.bind(r);
+    r._onUpdate = (dx, side, startTime) => {
+      if (side) return orig(dx, side, startTime); // resize lewat pegangan ujung
+      const parent = r.element?.parentElement;
+      if (!parent) return;
+      const width = parent.getBoundingClientRect().width;
+      let d = (dx / width) * r.totalDuration;
+      d = Math.max(-r.start, Math.min(r.totalDuration - r.end, d));
+      if (!d) return;
+      r.start += d;
+      r.end += d;
+      r.renderPosition();
+      r.emit('update');
+    };
+  });
   regions.on('region-updated', (r) => {
     if (r.id === `r-${activeId}`) onRangeEdit?.(activeId, round(r.start), round(r.end));
   });
   regions.on('region-clicked', (r, e) => {
+    if (!editMode) return; // mode navigasi: klik diteruskan ke waveform (pindah posisi)
     e.stopPropagation();
     onRegionClick?.(r.id.replace(/^r-/, ''));
   });
@@ -180,22 +203,38 @@ export function createPlayer(container, { strip, onTime, onState, onRangeEdit, o
     // Rentang yang tidak aktif tidak digambar agar waveform tidak penuh tumpukan.
     drawRegions(items, active) {
       activeId = active;
+      lastItems = items;
       suppressCreate = true;
       regions.clearRegions();
       for (const l of items) {
         if (l.start == null || l.end == null || l.end <= l.start) continue;
         const isActive = l.id === active;
         if (!isActive && !l.lines) continue; // tampilkan semua bagian, baris hanya saat aktif
+        const editable = isActive && editMode;
         regions.addRegion({
           id: `r-${l.id}`,
           start: l.start,
           end: l.end,
           color: isActive ? css('--region-active') : css('--region'),
-          drag: isActive,
-          resize: isActive,
+          drag: editable,
+          resize: editable,
         });
       }
       suppressCreate = false;
+    },
+    get editMode() {
+      return editMode;
+    },
+    setEditMode(on) {
+      editMode = on;
+      container.classList.toggle('editing', on);
+      ws.setOptions({ dragToSeek: !on }); // di mode edit, drag = membuat/mengubah rentang
+      if (on && !stopDragSelection) stopDragSelection = regions.enableDragSelection({ color: css('--region-active') }, 4);
+      if (!on && stopDragSelection) {
+        stopDragSelection();
+        stopDragSelection = null;
+      }
+      api.drawRegions(lastItems, activeId);
     },
   };
   return api;
