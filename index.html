@@ -81,6 +81,7 @@
       </div>
     <section class="player" id="player">
       <div class="wave-wrap">
+        <div class="sec-strip" id="sec-strip" aria-label="Bagian lagu"></div>
         <div id="wave"></div>
         <p id="wave-msg" class="wave-msg"></p>
       </div>
@@ -104,6 +105,14 @@
         <span class="active-label" id="active-label">Pilih baris untuk ditandai</span>
         <button id="mark-start">⇤ Mulai</button>
         <button id="mark-end">Selesai ⇥</button>
+      </div>
+      <div class="now" id="now" hidden>
+        <div class="now-head">
+          <span class="now-name" id="now-name"></span>
+          <span class="now-next" id="now-next"></span>
+          <button class="ghost small" id="now-toggle" aria-expanded="true">Sembunyikan</button>
+        </div>
+        <div class="now-body" id="now-body"></div>
       </div>
     </section>
 

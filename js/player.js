@@ -4,7 +4,7 @@ import RegionsPlugin from 'https://unpkg.com/wavesurfer.js@7.12.12/dist/plugins/
 
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-export function createPlayer(container, { onTime, onState, onRangeEdit, onRegionClick }) {
+export function createPlayer(container, { strip, onTime, onState, onRangeEdit, onRegionClick, onStripClick }) {
   const regions = RegionsPlugin.create();
   const ws = WaveSurfer.create({
     container,
@@ -58,6 +58,32 @@ export function createPlayer(container, { onTime, onState, onRangeEdit, onRegion
     range = null; // klik/geser waveform = keluar dari mode rentang
   });
 
+  // ---------- Strip label bagian di atas waveform ----------
+  // Lebar & posisi mengikuti waveform (termasuk saat di-zoom/scroll).
+  const stripInner = strip ? strip.appendChild(document.createElement('div')) : null;
+  if (stripInner) stripInner.className = 'sec-strip-inner';
+  let lastSync = '';
+  const syncStrip = () => {
+    if (!stripInner) return;
+    const w = ws.getWrapper();
+    const key = `${w.scrollWidth || w.clientWidth}|${ws.getScroll()}`;
+    if (key === lastSync) return;
+    lastSync = key;
+    stripInner.style.width = `${w.scrollWidth || w.clientWidth}px`;
+    stripInner.style.transform = `translateX(${-ws.getScroll()}px)`;
+  };
+  ws.on('timeupdate', syncStrip); // autoScroll saat diputar
+  // Event 'scroll' wavesurfer bisa membawa posisi lama; dengarkan elemen scroll-nya langsung.
+  ws.getWrapper().parentElement?.addEventListener('scroll', syncStrip, { passive: true });
+  ws.on('scroll', syncStrip);
+  ws.on('zoom', () => requestAnimationFrame(syncStrip));
+  ws.on('redrawcomplete', syncStrip);
+  ws.on('resize', syncStrip);
+  stripInner?.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-sec]');
+    if (b) onStripClick?.(b.dataset.sec);
+  });
+
   regions.on('region-created', (r) => {
     if (suppressCreate) return;
     // Region baru hasil drag → jadi rentang baris aktif.
@@ -83,6 +109,30 @@ export function createPlayer(container, { onTime, onState, onRangeEdit, onRegion
     empty() {
       ws.empty();
       regions.clearRegions();
+      if (stripInner) stripInner.innerHTML = '';
+    },
+    // Gambar label bagian; currentId = yang sedang diputar, activeId = yang sedang ditandai.
+    drawStrip(sections, { currentId, activeId } = {}) {
+      if (!stripInner) return;
+      const dur = api.duration;
+      if (!dur) return void (stripInner.innerHTML = '');
+      stripInner.innerHTML = sections
+        .map((s, i) => {
+          if (s.start == null) return '';
+          const next = sections.slice(i + 1).find((x) => x.start != null);
+          const end = s.end ?? next?.start ?? dur;
+          if (end <= s.start) return '';
+          const left = (s.start / dur) * 100;
+          const width = ((end - s.start) / dur) * 100;
+          const cls = `sec-tag${s.id === currentId ? ' current' : ''}${s.id === activeId ? ' active' : ''}`;
+          const name = String(s.name || '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+          return `<button type="button" class="${cls}" data-sec="${s.id}" style="left:${left}%;width:${width}%" title="${name}">${name}</button>`;
+        })
+        .join('');
+      syncStrip();
+    },
+    markCurrent(currentId) {
+      stripInner?.querySelectorAll('.sec-tag').forEach((b) => b.classList.toggle('current', b.dataset.sec === currentId));
     },
     get duration() {
       return ws.getDuration() || 0;
@@ -138,7 +188,6 @@ export function createPlayer(container, { onTime, onState, onRangeEdit, onRegion
         if (!isActive && !l.lines) continue; // tampilkan semua bagian, baris hanya saat aktif
         regions.addRegion({
           id: `r-${l.id}`,
-          content: l.lines ? l.name : undefined,
           start: l.start,
           end: l.end,
           color: isActive ? css('--region-active') : css('--region'),

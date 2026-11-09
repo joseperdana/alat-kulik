@@ -294,7 +294,8 @@ async function leaveSong() {
   player?.pause();
   player?.empty();
   if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-  Object.assign(state, { song: null, activeId: null, audioUrl: null, audioPath: null });
+  Object.assign(state, { song: null, activeId: null, audioUrl: null, audioPath: null, currentSecId: null, currentLineId: null });
+  $('#now').hidden = true;
 }
 
 function fillMeta() {
@@ -312,6 +313,7 @@ async function loadAudio() {
   if (!path) {
     player.empty();
     msg.textContent = 'Belum ada audio. Pakai menu ⋯ → Ganti audio.';
+    $('#now').hidden = true;
     return;
   }
   if (path === state.audioPath) return redraw();
@@ -361,11 +363,112 @@ function ensurePlayer() {
       setActive(id);
       document.querySelector(`[data-range="${id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     },
+    strip: $('#sec-strip'),
+    // Klik label bagian → lompat ke awal bagian itu.
+    onStripClick: (id) => {
+      const t = findTarget(id);
+      if (!t) return;
+      setActive(id);
+      if (t.obj.start != null) player.seek(t.obj.start);
+      refreshNow(t.obj.start ?? player.time, true);
+    },
   });
 }
 
 function updateTime(t) {
   $('#time').innerHTML = `${fmt(t)}<span class="dur"> / ${fmt(player?.duration || 0, false)}</span>`;
+  refreshNow(t);
+}
+
+// ---------- Panel "Sekarang": isi bagian yang sedang diputar ----------
+// Akhir rentang: end bila ada, kalau tidak sampai awal item bertanda berikutnya.
+function spanEnd(list, i) {
+  const o = list[i];
+  if (o.end != null) return o.end;
+  return list.slice(i + 1).find((x) => x.start != null)?.start ?? Infinity;
+}
+function itemAt(list, t) {
+  let hit = null;
+  list.forEach((o, i) => {
+    if (o.start != null && t >= o.start - 0.05 && t < spanEnd(list, i) && (!hit || o.start >= hit.start)) hit = o;
+  });
+  return hit;
+}
+
+function refreshNow(t = player?.time ?? 0, force = false) {
+  if (!state.song) return;
+  const sec = itemAt(sections(), t);
+  const secId = sec?.id ?? null;
+  if (force || secId !== state.currentSecId) {
+    state.currentSecId = secId;
+    player?.markCurrent(secId);
+    renderNow(sec);
+  }
+  if (!sec) return;
+  const line = itemAt(sec.lines, t);
+  const lineId = line?.id ?? null;
+  if (force || lineId !== state.currentLineId) {
+    state.currentLineId = lineId;
+    const body = $('#now-body');
+    body.querySelectorAll('.now-line.current').forEach((el) => el.classList.remove('current'));
+    const el = lineId && body.querySelector(`[data-nl="${lineId}"]`);
+    if (el) {
+      el.classList.add('current');
+      // Gulir di dalam panel saja (bukan halaman).
+      body.scrollTop = el.offsetTop - body.offsetTop - 8;
+    }
+  }
+}
+
+function renderNow(sec) {
+  const box = $('#now');
+  const hasAudio = !!state.song?.audio_path;
+  box.hidden = !hasAudio || !sections().length;
+  if (box.hidden) return;
+  const i = sec ? sections().indexOf(sec) : -1;
+  const next = sec && sections()[i + 1];
+  $('#now-name').textContent = sec ? sec.name || 'Bagian' : 'Sekarang';
+  $('#now-next').textContent = next ? `→ ${next.name}` : '';
+  if (!sec) {
+    const anyMarked = sections().some((s) => s.start != null);
+    $('#now-body').innerHTML = `<p class="now-hint">${
+      anyMarked
+        ? 'Posisi ini belum masuk bagian mana pun.'
+        : 'Tandai bagian (⇤ Mulai lalu Selesai ⇥) supaya isinya tampil di sini saat lagu diputar.'
+    }</p>`;
+    return;
+  }
+  const lines = sec.lines.filter((l) => l.chords || l.melody || l.lyrics || l.note);
+  $('#now-body').innerHTML = lines.length
+    ? lines
+        .map(
+          (l) => `<div class="now-line" data-nl="${l.id}">
+        ${l.chords ? `<div class="now-chords">${esc(l.chords)}</div>` : ''}
+        ${l.melody ? `<div class="notasi">${renderNotasi(l.melody)}</div>` : ''}
+        ${l.lyrics ? `<div class="now-lyrics">${esc(l.lyrics)}</div>` : ''}
+        ${l.note ? `<div class="now-note">${esc(l.note)}</div>` : ''}
+      </div>`,
+        )
+        .join('')
+    : '<p class="now-hint">Bagian ini belum ada isinya.</p>';
+  $('#now-body').scrollTop = 0;
+}
+
+function setNowCollapsed(collapsed) {
+  $('#now').classList.toggle('collapsed', collapsed);
+  $('#now-toggle').textContent = collapsed ? 'Tampilkan' : 'Sembunyikan';
+  $('#now-toggle').setAttribute('aria-expanded', String(!collapsed));
+  try {
+    localStorage.setItem('kulik-now-collapsed', collapsed ? '1' : '0');
+  } catch {
+    /* abaikan */
+  }
+}
+$('#now-toggle').addEventListener('click', () => setNowCollapsed(!$('#now').classList.contains('collapsed')));
+try {
+  setNowCollapsed(localStorage.getItem('kulik-now-collapsed') === '1');
+} catch {
+  /* abaikan */
 }
 
 // ---------- Render lembar ----------
@@ -449,7 +552,10 @@ function updateActiveLabel() {
 }
 
 function redraw() {
-  if (player && state.song && player.duration) player.drawRegions(rangeItems(), state.activeId);
+  if (!(player && state.song && player.duration)) return;
+  player.drawRegions(rangeItems(), state.activeId);
+  player.drawStrip(sections(), { currentId: state.currentSecId, activeId: state.activeId });
+  refreshNow(player.time, true);
 }
 
 // ---------- Event lembar ----------
@@ -670,6 +776,9 @@ $('#delete-song').addEventListener('click', async () => {
 // ---------- Simpan otomatis & sinkron ----------
 function markDirty() {
   state.dirty = true;
+  // Isi panel "Sekarang" ikut berubah saat lembar diedit (di-debounce supaya ringan).
+  clearTimeout(state.nowTimer);
+  state.nowTimer = setTimeout(() => refreshNow(player?.time ?? 0, true), 250);
   setSync('saving');
   clearTimeout(state.saveTimer);
   state.saveTimer = setTimeout(save, 1000);
