@@ -176,6 +176,28 @@ label input { color: var(--ink); font-size: 1rem; }
 .toggle[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .zoom { margin-left: auto; display: flex; }
 
+/* ---------- Ikuti DAW ---------- */
+.dawbar {
+  display: flex; align-items: center; gap: 0.5rem 0.75rem; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.45rem 0.6rem; font-size: 0.85rem;
+}
+.dawbar[hidden] { display: none; }
+.daw-status { display: inline-flex; align-items: center; gap: 0.4em; font-weight: 600; color: var(--muted); }
+.daw-status::before { content: ''; width: 0.6em; height: 0.6em; border-radius: 50%; background: var(--line); }
+.daw-status[data-s='run'] { color: var(--ok); }
+.daw-status[data-s='run']::before { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+.daw-status[data-s='stop']::before { background: var(--accent); }
+.daw-status[data-s='err'] { color: var(--danger); }
+.daw-status[data-s='err']::before { background: var(--danger); }
+.daw-tc { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+.daw-port { display: flex; flex-direction: row; align-items: center; gap: 0.35em; font-size: 0.85rem; }
+.daw-port select { padding: 0.3em 0.4em; max-width: 14em; }
+.daw-offset { display: inline-flex; align-items: center; gap: 0.1em; color: var(--muted); }
+.daw-offset span { margin-right: 0.3em; }
+.daw-offset input { width: 6.5em; font-family: var(--mono); font-size: 0.85rem; padding: 0.25em 0.4em; text-align: center; }
+#daw-align { margin-left: auto; }
+.play:disabled { opacity: 0.45; cursor: not-allowed; }
+
 .markbar { display: flex; align-items: center; gap: 0.5rem; }
 .active-label { flex: 1; min-width: 0; font-size: 0.85rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .markbar button { font-weight: 600; }

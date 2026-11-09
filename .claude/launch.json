@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "alat-kulik", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "5173"], "port": 5173 }
+    { "name": "alat-kulik", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "5173"], "port": 5173 },
+    { "name": "alat-kulik-alt", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "5181"], "port": 5181, "autoPort": false }
   ]
 }

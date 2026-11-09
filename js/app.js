@@ -2,6 +2,7 @@ import * as store from './store.js';
 import { render as renderNotasi } from './notasi.js';
 import { createPlayer } from './player.js';
 import { parseChordSheet } from './impor.js';
+import * as midi from './midi.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) =>
@@ -285,6 +286,8 @@ async function openSong(id) {
   state.dirty = false;
   setSync('saved');
   fillMeta();
+  $('#daw-offset').value = fmtOffset(dawOffset());
+  daw.lastTarget = null;
   renderSheet();
   await loadAudio();
 }
@@ -475,6 +478,142 @@ try {
 } catch {
   /* abaikan */
 }
+
+// ---------- Ikuti DAW (MIDI Time Code) ----------
+// Posisi audio = posisi DAW − offset. Offset disimpan per lagu di sheet.daw.offset.
+const daw = { on: false, raf: 0, lastTarget: null, lastStatus: '' };
+const PORT_KEY = 'kulik-daw-port';
+const FOLLOW_KEY = 'kulik-daw-follow';
+const remember = (k, v) => {
+  try {
+    v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v);
+  } catch {
+    /* abaikan */
+  }
+};
+const recall = (k) => {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+};
+
+export function fmtOffset(t) {
+  const a = Math.abs(t);
+  const m = Math.floor(a / 60);
+  return `${t < 0 ? '-' : ''}${m}:${(a - m * 60).toFixed(2).padStart(5, '0')}`;
+}
+export function parseOffset(str) {
+  const v = String(str ?? '').trim().replace(',', '.');
+  const neg = v.startsWith('-');
+  const parts = v.replace(/^[-+]/, '').split(':');
+  if (!parts[0] && parts.length === 1) return 0;
+  const n = parts.length === 2 ? Number(parts[0]) * 60 + Number(parts[1]) : Number(parts[0]);
+  return Number.isFinite(n) ? Math.round((neg ? -n : n) * 100) / 100 : undefined;
+}
+
+const dawOffset = () => state.song?.sheet?.daw?.offset ?? 0;
+function setDawOffset(v) {
+  if (!state.song) return;
+  state.song.sheet.daw = { ...state.song.sheet.daw, offset: Math.round(v * 100) / 100 };
+  $('#daw-offset').value = fmtOffset(dawOffset());
+  daw.lastTarget = null; // paksa kursor pindah ke posisi baru
+  markDirty();
+}
+
+function setDawStatus(s, text) {
+  const key = `${s}|${text}`;
+  if (key === daw.lastStatus) return;
+  daw.lastStatus = key;
+  const el = $('#daw-status');
+  el.dataset.s = s;
+  el.textContent = text;
+}
+
+function fillPorts() {
+  const sel = $('#daw-port');
+  const inputs = midi.listInputs();
+  const saved = recall(PORT_KEY);
+  sel.innerHTML = inputs.length
+    ? inputs.map((i) => `<option value="${esc(i.id)}">${esc(i.name || i.id)}</option>`).join('')
+    : '<option value="">(tidak ada input MIDI)</option>';
+  const pick = inputs.find((i) => i.id === saved) ?? inputs[0];
+  sel.value = pick?.id ?? '';
+  midi.connectInput(pick?.id ?? null);
+}
+
+async function setFollow(on) {
+  if (on) {
+    try {
+      const access = await midi.requestMidi();
+      access.onstatechange = (e) => {
+        if (e.port.type === 'input' && daw.on) fillPorts();
+      };
+    } catch (err) {
+      toast(err.message, 5000);
+      on = false;
+    }
+  }
+  daw.on = on;
+  remember(FOLLOW_KEY, on ? '1' : null);
+  $('#daw').setAttribute('aria-pressed', String(on));
+  $('#dawbar').hidden = !on;
+  $('#play').disabled = on;
+  cancelAnimationFrame(daw.raf);
+  daw.lastStatus = '';
+  if (!on) return void midi.connectInput(null);
+  player?.pause();
+  fillPorts();
+  $('#daw-offset').value = fmtOffset(dawOffset());
+  daw.lastTarget = null;
+  daw.raf = requestAnimationFrame(followTick);
+}
+
+function followTick() {
+  if (!daw.on) return;
+  daw.raf = requestAnimationFrame(followTick);
+  if (!midi.listInputs().length) return setDawStatus('err', 'Tidak ada input MIDI');
+  const p = midi.mtc.position();
+  if (!p.locked) {
+    $('#daw-tc').textContent = '--:--.--';
+    return setDawStatus('wait', 'Menunggu sinyal MTC…');
+  }
+  $('#daw-tc').textContent = fmtOffset(p.time);
+  if (!player?.duration || !state.song) return setDawStatus(p.running ? 'run' : 'stop', 'Belum ada audio');
+  const target = p.time - dawOffset();
+  const outside = target < 0 || target > player.duration;
+  setDawStatus(
+    p.running ? 'run' : 'stop',
+    `${p.running ? 'Mengikuti' : 'DAW berhenti'} · ${p.rate} fps${outside ? ' · di luar audio' : ''}`,
+  );
+  if (player.playing) player.pause();
+  // Hanya pindahkan kursor saat posisi DAW berubah: saat DAW diam, waveform tetap bisa diklik (untuk "Samakan").
+  if (daw.lastTarget != null && Math.abs(target - daw.lastTarget) < 0.005) return;
+  daw.lastTarget = target;
+  player.seek(target);
+}
+
+$('#daw').addEventListener('click', () => setFollow(!daw.on));
+$('#daw-port').addEventListener('change', (e) => {
+  remember(PORT_KEY, e.target.value || null);
+  midi.connectInput(e.target.value || null);
+  daw.lastTarget = null;
+});
+$('#daw-offset').addEventListener('change', (e) => {
+  const v = parseOffset(e.target.value);
+  if (v === undefined) return void (e.target.value = fmtOffset(dawOffset()));
+  setDawOffset(v);
+});
+$('#daw-off-minus').addEventListener('click', () => setDawOffset(dawOffset() - 0.05));
+$('#daw-off-plus').addEventListener('click', () => setDawOffset(dawOffset() + 0.05));
+$('#daw-align').addEventListener('click', () => {
+  const p = midi.mtc.position();
+  if (!p.locked) return toast('Belum ada sinyal dari DAW. Putar atau pindahkan posisi di Studio One dulu.');
+  if (!player?.duration) return toast('Lagu ini belum punya audio.');
+  setDawOffset(p.time - player.time);
+  toast(`Disamakan: DAW ${fmtOffset(p.time)} = audio ${fmt(player.time)}`);
+});
 
 // ---------- Render lembar ----------
 function rangeHtml(o) {
@@ -794,7 +933,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     return undo();
   }
-  if (e.code !== 'Space' || $('#view-song').hidden) return;
+  if (e.code !== 'Space' || $('#view-song').hidden || daw.on) return;
   if (e.target instanceof Element && e.target.closest('input, textarea, select, button, summary')) return;
   e.preventDefault();
   player?.toggle();
@@ -949,3 +1088,4 @@ store.onAuth((session) => {
 });
 state.session = await store.getSession();
 route();
+if (recall(FOLLOW_KEY) === '1') setFollow(true);

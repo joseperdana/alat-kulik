@@ -100,6 +100,19 @@
           <button class="ghost small" id="zoom-out" aria-label="Perkecil waveform">−</button>
           <button class="ghost small" id="zoom-in" aria-label="Perbesar waveform">+</button>
         </span>
+        <button class="toggle" id="daw" aria-pressed="false" title="Ikuti posisi DAW (Studio One) lewat MIDI Time Code">🎛 Ikuti DAW</button>
+      </div>
+      <div class="dawbar" id="dawbar" hidden>
+        <span class="daw-status" id="daw-status" data-s="off">Mati</span>
+        <span class="daw-tc" id="daw-tc" title="Posisi DAW (MTC)">--:--.--</span>
+        <label class="daw-port"><span>Input</span><select id="daw-port" aria-label="Input MIDI"></select></label>
+        <span class="daw-offset" title="Posisi DAW saat audio di detik 0:00">
+          <span>Offset</span>
+          <button class="nudge" id="daw-off-minus" aria-label="Kurangi offset">−</button>
+          <input id="daw-offset" class="t" inputmode="decimal" aria-label="Offset DAW" />
+          <button class="nudge" id="daw-off-plus" aria-label="Tambah offset">+</button>
+        </span>
+        <button class="small" id="daw-align" title="Hentikan DAW di satu titik, klik titik yang sama di waveform, lalu tekan ini">Samakan di sini</button>
       </div>
       <div class="markbar">
         <span class="active-label" id="active-label">Pilih baris untuk ditandai</span>
