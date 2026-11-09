@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Alat Kulik</title>
+  <meta name="description" content="Catat chord dan not angka yang terhubung ke detik mp3." />
+  <meta name="theme-color" content="#f6f1e7" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Kulik" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/" class="brand" id="brand">Alat&nbsp;Kulik</a>
+    <span class="sync" id="sync" hidden></span>
+    <button class="ghost small" id="logout" hidden>Keluar</button>
+  </header>
+
+  <!-- Login -->
+  <main id="view-login" class="view narrow" hidden>
+    <h1>Masuk</h1>
+    <p class="muted">Pakai akun yang sama di laptop dan HP supaya catatan tersinkron.</p>
+    <form id="login-form" class="stack">
+      <label>Email <input type="email" name="email" autocomplete="email" required /></label>
+      <label>Kata sandi <input type="password" name="password" autocomplete="current-password" minlength="6" required /></label>
+      <div class="row">
+        <button type="submit" class="primary" data-act="in">Masuk</button>
+        <button type="submit" class="ghost" data-act="up">Daftar akun baru</button>
+      </div>
+      <p id="login-msg" class="msg" role="status"></p>
+    </form>
+  </main>
+
+  <!-- Daftar lagu -->
+  <main id="view-list" class="view" hidden>
+    <div class="list-head">
+      <h1>Lagu</h1>
+      <button class="primary" id="new-song-btn">+ Lagu baru</button>
+    </div>
+    <form id="new-song-form" class="card stack" hidden>
+      <label>Judul <input name="title" required placeholder="mis. Kisah Kasih di Sekolah" /></label>
+      <label>Artis <input name="artist" placeholder="opsional" /></label>
+      <label>File audio (mp3/m4a/wav, maks 50 MB) <input type="file" name="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac" required /></label>
+      <div class="row">
+        <button type="submit" class="primary">Simpan & buka</button>
+        <button type="button" class="ghost" id="new-song-cancel">Batal</button>
+      </div>
+      <p class="msg" id="new-song-msg" role="status"></p>
+    </form>
+    <ul id="song-list" class="song-list"></ul>
+    <p id="song-empty" class="muted center" hidden>Belum ada lagu. Tekan “+ Lagu baru” untuk mulai ngulik.</p>
+  </main>
+
+  <!-- Halaman lagu -->
+  <main id="view-song" class="view song" hidden>
+      <div class="meta">
+        <input class="title-input" id="f-title" aria-label="Judul" />
+        <div class="meta-row">
+          <input id="f-artist" placeholder="Artis" aria-label="Artis" />
+          <input id="f-key" placeholder="Kunci" aria-label="Kunci" class="tiny" />
+          <input id="f-bpm" placeholder="BPM" aria-label="BPM" inputmode="decimal" class="tiny" />
+          <details class="menu">
+            <summary aria-label="Menu lagu">⋯</summary>
+            <div class="menu-pop">
+              <label class="filebtn">Ganti audio<input type="file" id="replace-audio" accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac" hidden /></label>
+              <button class="danger" id="delete-song">Hapus lagu</button>
+            </div>
+          </details>
+        </div>
+      </div>
+    <section class="player" id="player">
+      <div class="wave-wrap">
+        <div id="wave"></div>
+        <p id="wave-msg" class="wave-msg"></p>
+      </div>
+      <div class="controls">
+        <button class="play" id="play" aria-label="Putar">▶</button>
+        <span class="time" id="time">0:00.0 / 0:00</span>
+        <label class="speed"><span>Tempo</span>
+          <select id="speed" aria-label="Tempo">
+            <option value="0.5">50%</option><option value="0.6">60%</option><option value="0.7">70%</option>
+            <option value="0.75">75%</option><option value="0.8">80%</option><option value="0.9">90%</option>
+            <option value="1" selected>100%</option>
+          </select>
+        </label>
+        <button class="toggle" id="loop" aria-pressed="false">⟳ Loop</button>
+        <span class="zoom">
+          <button class="ghost small" id="zoom-out" aria-label="Perkecil waveform">−</button>
+          <button class="ghost small" id="zoom-in" aria-label="Perbesar waveform">+</button>
+        </span>
+      </div>
+      <div class="markbar">
+        <span class="active-label" id="active-label">Pilih baris untuk ditandai</span>
+        <button id="mark-start">⇤ Mulai</button>
+        <button id="mark-end">Selesai ⇥</button>
+      </div>
+    </section>
+
+    <section class="sheet" id="sheet"></section>
+    <div class="sheet-foot">
+      <button class="ghost" id="add-section">+ Bagian</button>
+      <details class="legend">
+        <summary>Cara menulis not angka</summary>
+        <table>
+          <tr><td><code>1</code>–<code>7</code>, <code>0</code></td><td>not, istirahat</td></tr>
+          <tr><td><code>5'</code> / <code>1,</code></td><td>titik atas / titik bawah (oktaf)</td></tr>
+          <tr><td><code>#4</code> <code>b7</code></td><td>kres / mol</td></tr>
+          <tr><td><code>(5 6)</code></td><td>1 garis ritme (½ ketuk)</td></tr>
+          <tr><td><code>((5 6 1 2))</code></td><td>2 garis (¼ ketuk)</td></tr>
+          <tr><td><code>5.</code></td><td>not bertitik</td></tr>
+          <tr><td><code>-</code></td><td>tahan 1 ketuk</td></tr>
+          <tr><td><code>5~5</code></td><td>ikatan (sinkop)</td></tr>
+          <tr><td><code>|</code></td><td>garis birama</td></tr>
+        </table>
+        <p class="muted">Contoh sinkop: <code>(5 6~) 6 (5 3) |</code></p>
+      </details>
+    </div>
+  </main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
