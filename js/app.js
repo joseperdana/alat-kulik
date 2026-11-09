@@ -481,7 +481,7 @@ try {
 
 // ---------- Ikuti DAW (MIDI Time Code) ----------
 // Posisi audio = posisi DAW − offset. Offset disimpan per lagu di sheet.daw.offset.
-const daw = { on: false, raf: 0, lastTarget: null, lastStatus: '' };
+const daw = { on: false, raf: 0, lastTarget: null, lastStatus: '', pending: false, failed: null };
 const PORT_KEY = 'kulik-daw-port';
 const FOLLOW_KEY = 'kulik-daw-follow';
 const remember = (k, v) => {
@@ -544,25 +544,45 @@ function fillPorts() {
 }
 
 async function setFollow(on) {
+  if (daw.pending) return;
+  cancelAnimationFrame(daw.raf);
+  daw.lastStatus = '';
   if (on) {
+    // Tampilkan bar segera: izin MIDI di Chrome bisa menunggu jawaban pop-up di address bar.
+    $('#dawbar').hidden = false;
+    $('#daw').setAttribute('aria-pressed', 'true');
+    setDawStatus('wait', 'Meminta izin MIDI…');
+    daw.pending = true;
+    const hint = setTimeout(
+      () => setDawStatus('wait', 'Menunggu izin MIDI — klik ikon izin di address bar Chrome, lalu pilih Izinkan'),
+      2500,
+    );
     try {
       const access = await midi.requestMidi();
       access.onstatechange = (e) => {
         if (e.port.type === 'input' && daw.on) fillPorts();
       };
     } catch (err) {
-      toast(err.message, 5000);
       on = false;
+      daw.failed = err.message;
+    } finally {
+      clearTimeout(hint);
+      daw.pending = false;
     }
   }
   daw.on = on;
   remember(FOLLOW_KEY, on ? '1' : null);
   $('#daw').setAttribute('aria-pressed', String(on));
-  $('#dawbar').hidden = !on;
   $('#play').disabled = on;
-  cancelAnimationFrame(daw.raf);
-  daw.lastStatus = '';
-  if (!on) return void midi.connectInput(null);
+  if (!on) {
+    midi.connectInput(null);
+    // Gagal: biarkan bar terbuka dengan pesan error supaya jelas apa yang terjadi.
+    $('#dawbar').hidden = !daw.failed;
+    if (daw.failed) setDawStatus('err', daw.failed);
+    daw.failed = null;
+    return;
+  }
+  $('#dawbar').hidden = false;
   player?.pause();
   fillPorts();
   $('#daw-offset').value = fmtOffset(dawOffset());

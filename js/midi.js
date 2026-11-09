@@ -122,7 +122,7 @@ const onMessage = (e) => mtc.feed(e.data, e.timeStamp);
 
 export async function requestMidi() {
   if (access) return access;
-  if (!midiSupported()) throw new Error('Browser ini belum mendukung Web MIDI. Pakai Chrome atau Edge.');
+  if (!midiSupported()) throw new Error('Browser ini (mis. Safari) belum mendukung Web MIDI. Buka Alat Kulik di Chrome atau Edge.');
   try {
     access = await navigator.requestMIDIAccess({ sysex: true }); // sysex = pesan full frame saat locate
   } catch {
@@ -141,7 +141,7 @@ export function connectInput(id) {
   if (input) input.removeEventListener('midimessage', onMessage);
   input = id ? (access?.inputs.get(id) ?? null) : null;
   input?.addEventListener('midimessage', onMessage);
-  input?.open?.(); // addEventListener tidak selalu membuka port secara otomatis
+  input?.open?.()?.catch?.(() => {}); // addEventListener tidak selalu membuka port secara otomatis
   mtc.reset();
   return input;
 }
