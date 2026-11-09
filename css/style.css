@@ -240,6 +240,35 @@ label input { color: var(--ink); font-size: 1rem; }
   border: 1.5px solid currentColor; border-bottom: none; border-radius: 50% 50% 0 0 / 100% 100% 0 0;
 }
 
+/* Rentang per bagian */
+.sec-head { flex-wrap: wrap; row-gap: 0.25rem; padding: 0.2rem 0.2rem 0.25rem; border-radius: 8px 8px 0 0; }
+.sec-head .lplay { width: 32px; height: 32px; }
+.sec-head .sec-name { flex: 1 1 8em; min-width: 6em; }
+.sec-head.active { background: var(--accent-soft); border-bottom-color: var(--accent); }
+.sec-head.active .sec-name { color: var(--accent); }
+
+/* Baris ringkas: kontrol waktu & kolom kosong muncul saat baris diketuk */
+.line:not(.active):not(.has-range) .line-head { display: none; }
+.line:not(.active) .f.melody:placeholder-shown,
+.line:not(.active) .f.note:placeholder-shown,
+.line:not(.active) .f.chords:placeholder-shown { display: none; }
+.line:not(.active) { cursor: pointer; }
+
+/* Import */
+textarea {
+  font: 0.9rem/1.4 var(--mono); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 0.5em 0.6em; resize: vertical; width: 100%;
+}
+textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.import-preview { margin: 0; font-size: 0.9rem; color: var(--ink); background: var(--surface-2); padding: 0.5em 0.7em; border-radius: 8px; }
+.import-preview b { color: var(--accent); }
+.dlg {
+  width: min(560px, calc(100% - 32px)); max-height: calc(100% - 32px); border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--bg); color: var(--ink); padding: 1rem;
+}
+.dlg::backdrop { background: rgba(0, 0, 0, 0.45); }
+.dlg h2 { margin: 0; font-size: 1.15rem; }
+
 /* ---------- Bawah ---------- */
 .sheet-foot { display: grid; gap: 1rem; margin-top: 1rem; }
 .sheet-foot > button { justify-self: start; border: 1px dashed var(--line); }
@@ -259,7 +288,8 @@ label input { color: var(--ink); font-size: 1rem; }
   .wave-wrap { min-height: 64px; }
   .controls { flex-wrap: nowrap; gap: 0.35rem; }
   .play { width: 42px; height: 42px; flex: none; }
-  .time { min-width: 0; font-size: 0.78rem; white-space: nowrap; }
+  .time { min-width: 0; font-size: 0.82rem; white-space: nowrap; }
+  .time .dur { display: none; }
   .toggle { white-space: nowrap; }
   .speed span { display: none; }
   .toggle { padding: 0.4em 0.55em; }

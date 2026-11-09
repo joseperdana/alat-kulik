@@ -1,6 +1,7 @@
 import * as store from './store.js';
 import { render as renderNotasi } from './notasi.js';
 import { createPlayer } from './player.js';
+import { parseChordSheet } from './impor.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) =>
@@ -123,7 +124,71 @@ $('#new-song-btn').addEventListener('click', () => {
 $('#new-song-cancel').addEventListener('click', () => {
   $('#new-song-form').reset();
   $('#new-song-form').hidden = true;
+  showImportPreview($('#new-import-preview'), '');
 });
+
+// ---------- Import catatan chord ----------
+function showImportPreview(el, text) {
+  const p = parseChordSheet(text);
+  el.hidden = !text.trim();
+  if (el.hidden) return p;
+  if (!p.sections.length) {
+    el.textContent = 'Belum ada bagian yang terdeteksi. Tulis nama bagian diakhiri titik dua, mis. "Verse:".';
+    return p;
+  }
+  const head = [p.title && `<b>${esc(p.title)}</b>`, p.key && `Kunci ${esc(p.key)}`].filter(Boolean).join(' · ');
+  const lines = p.sections.reduce((n, s) => n + s.lines.length, 0);
+  el.innerHTML = `${head ? `${head}<br>` : ''}${p.sections.length} bagian, ${lines} baris: ${p.sections.map((s) => esc(s.name)).join(' → ')}`;
+  return p;
+}
+$('#new-song-form [name=chordsheet]').addEventListener('input', (e) =>
+  showImportPreview($('#new-import-preview'), e.target.value),
+);
+
+const dlg = $('#import-dlg');
+$('#open-import').addEventListener('click', () => {
+  $('#open-import').closest('details').open = false;
+  $('#import-text').value = '';
+  showImportPreview($('#import-preview'), '');
+  $('#import-replace').disabled = $('#import-append').disabled = true;
+  dlg.showModal();
+  $('#import-text').focus();
+});
+$('#import-text').addEventListener('input', (e) => {
+  const p = showImportPreview($('#import-preview'), e.target.value);
+  $('#import-replace').disabled = $('#import-append').disabled = !p.sections.length;
+});
+// Tombol dialog langsung menjalankan import (tidak bergantung pada event 'close').
+for (const btn of [$('#import-replace'), $('#import-append')]) {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    applyImport(btn.value);
+  });
+}
+function applyImport(mode) {
+  const parsed = parseChordSheet($('#import-text').value);
+  if (!state.song || !parsed.sections.length) return dlg.close();
+  const imported = sheetFromImport(parsed).sections;
+  if (mode === 'replace') {
+    const hasContent = allLines().some((l) => l.chords || l.melody || l.lyrics || l.note);
+    if (hasContent && !confirm('Lembar yang sekarang akan diganti seluruhnya. Lanjutkan?')) return;
+    state.song.sheet.sections = imported;
+  } else {
+    sections().push(...imported);
+  }
+  dlg.close();
+  if (parsed.title && (!state.song.title || state.song.title === 'Tanpa judul')) state.song.title = parsed.title;
+  if (parsed.key && !state.song.song_key) state.song.song_key = parsed.key;
+  fillMeta();
+  renderSheet();
+  markDirty();
+  // Dialog mengembalikan fokus ke elemen sebelumnya saat ditutup; aktifkan setelahnya.
+  setTimeout(() => {
+    setActive(imported[0].id);
+    document.querySelector(`[data-range="${imported[0].id}"]`)?.scrollIntoView({ block: 'nearest' });
+  });
+  toast(`${imported.length} bagian di-import. Putar lagu lalu tekan "Selesai ⇥" di tiap perbatasan bagian.`, 4500);
+}
 $('#new-song-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
@@ -134,10 +199,12 @@ $('#new-song-form').addEventListener('submit', async (e) => {
   form.querySelectorAll('button').forEach((b) => (b.disabled = true));
   try {
     msg.textContent = 'Membuat lagu…';
+    const parsed = parseChordSheet(fd.get('chordsheet'));
     const song = await store.createSong({
-      title: fd.get('title').trim() || 'Tanpa judul',
+      title: fd.get('title').trim() || parsed.title || 'Tanpa judul',
       artist: fd.get('artist').trim(),
-      sheet: { sections: [newSection('Intro')] },
+      song_key: parsed.key,
+      sheet: parsed.sections.length ? sheetFromImport(parsed) : { sections: [newSection('Intro')] },
     });
     msg.textContent = 'Mengunggah audio…';
     const path = await store.uploadAudio(song.id, file);
@@ -155,7 +222,7 @@ $('#new-song-form').addEventListener('submit', async (e) => {
 
 // ---------- Model lembar lagu ----------
 const newLine = (start = null) => ({ id: uid(), start, end: null, chords: '', melody: '', lyrics: '', note: '' });
-const newSection = (name) => ({ id: uid(), name, lines: [newLine()] });
+const newSection = (name, lines = [newLine()]) => ({ id: uid(), name, start: null, end: null, lines });
 const sections = () => state.song.sheet.sections;
 const allLines = () => sections().flatMap((s) => s.lines);
 function findLine(id) {
@@ -165,10 +232,35 @@ function findLine(id) {
   }
   return null;
 }
+// Target rentang waktu: bagian atau baris (id keduanya unik).
+function findTarget(id) {
+  if (!id) return null;
+  const si = sections().findIndex((s) => s.id === id);
+  if (si >= 0) return { kind: 'sec', obj: sections()[si], index: si };
+  const hit = findLine(id);
+  return hit && { kind: 'line', obj: hit.line, section: hit.section, index: hit.index };
+}
+function nextTarget(t) {
+  if (t.kind === 'sec') return sections()[t.index + 1];
+  return t.section.lines[t.index + 1];
+}
 const lastEnd = () => {
-  const ends = allLines().map((l) => l.end).filter((t) => t != null);
+  const ends = [...sections(), ...allLines()].map((l) => l.end).filter((t) => t != null);
   return ends.length ? Math.max(...ends) : null;
 };
+const rangeItems = () => [...sections(), ...allLines()];
+
+// Lembar hasil import → format lembar app.
+function sheetFromImport(parsed) {
+  return {
+    sections: parsed.sections.map((s) =>
+      newSection(
+        s.name,
+        s.lines.map((l) => ({ ...newLine(), chords: l.chords, lyrics: l.lyrics })),
+      ),
+    ),
+  };
+}
 
 // ---------- Halaman lagu ----------
 async function openSong(id) {
@@ -187,7 +279,8 @@ async function openSong(id) {
   song.sheet.sections ||= [];
   state.song = song;
   state.loadedAt = song.updated_at;
-  state.activeId = null;
+  // Langsung aktifkan bagian pertama yang belum ditandai → bisa langsung tekan Mulai/Selesai.
+  state.activeId = song.sheet.sections.find((s) => s.start == null || s.end == null)?.id ?? null;
   state.dirty = false;
   setSync('saved');
   fillMeta();
@@ -247,45 +340,49 @@ function ensurePlayer() {
       $('#play').setAttribute('aria-label', playing ? 'Jeda' : 'Putar');
     },
     onRangeEdit: (id, start, end) => {
-      let hit = id && findLine(id);
-      if (!hit) {
-        // Belum ada baris aktif: buat baris baru di bagian terakhir.
-        if (!sections().length) sections().push({ id: uid(), name: 'Bagian 1', lines: [] });
+      let t = findTarget(id);
+      if (!t) {
+        // Belum ada yang aktif: buat baris baru di bagian terakhir.
+        if (!sections().length) sections().push(newSection('Bagian 1', []));
         const sec = sections()[sections().length - 1];
         const line = newLine();
         sec.lines.push(line);
         state.activeId = line.id;
         renderSheet();
-        hit = findLine(line.id);
+        t = findTarget(line.id);
       }
-      hit.line.start = start;
-      hit.line.end = end;
-      refreshTimes(hit.line);
+      t.obj.start = start;
+      t.obj.end = end;
+      refreshTimes(t.obj);
       redraw();
       markDirty();
     },
     onRegionClick: (id) => {
       setActive(id);
-      document.querySelector(`[data-line="${id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      document.querySelector(`[data-range="${id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     },
   });
 }
 
 function updateTime(t) {
-  $('#time').textContent = `${fmt(t)} / ${fmt(player?.duration || 0, false)}`;
+  $('#time').innerHTML = `${fmt(t)}<span class="dur"> / ${fmt(player?.duration || 0, false)}</span>`;
 }
 
 // ---------- Render lembar ----------
-function lineHtml(l, n) {
+function rangeHtml(o) {
   const tm = (f) => `<span class="tm">
       <button class="nudge" data-a="nudge" data-f="${f}" data-d="-0.1" aria-label="Geser ${f} mundur">−</button>
-      <input class="t" data-t="${f}" value="${fmt(l[f])}" placeholder="${f === 'start' ? 'mulai' : 'selesai'}" inputmode="decimal" aria-label="${f === 'start' ? 'Detik mulai' : 'Detik selesai'}" />
+      <input class="t" data-t="${f}" value="${fmt(o[f])}" placeholder="${f === 'start' ? 'mulai' : 'selesai'}" inputmode="decimal" aria-label="${f === 'start' ? 'Detik mulai' : 'Detik selesai'}" />
       <button class="nudge" data-a="nudge" data-f="${f}" data-d="0.1" aria-label="Geser ${f} maju">+</button>
     </span>`;
-  return `<article class="line${l.id === state.activeId ? ' active' : ''}" data-line="${l.id}">
+  return `<span class="range">${tm('start')}<span class="dash">–</span>${tm('end')}</span>`;
+}
+
+function lineHtml(l, n) {
+  return `<article class="line${l.id === state.activeId ? ' active' : ''}${l.start != null ? ' has-range' : ''}" data-line="${l.id}" data-range="${l.id}">
     <div class="line-head">
       <button class="lplay" data-a="play" aria-label="Putar baris ${n}">▶</button>
-      <span class="range">${tm('start')}<span class="dash">–</span>${tm('end')}</span>
+      ${rangeHtml(l)}
       <span class="lact">
         <button class="ghost small" data-a="lup" aria-label="Naikkan baris">↑</button>
         <button class="ghost small" data-a="ldown" aria-label="Turunkan baris">↓</button>
@@ -305,8 +402,10 @@ function renderSheet() {
   el.innerHTML = sections()
     .map(
       (s) => `<section class="sec" data-sec="${s.id}">
-      <div class="sec-head">
+      <div class="sec-head${s.id === state.activeId ? ' active' : ''}" data-range="${s.id}">
+        <button class="lplay" data-a="play" aria-label="Putar bagian ${esc(s.name)}">▶</button>
         <input class="sec-name" data-sf="name" value="${esc(s.name)}" aria-label="Nama bagian" />
+        ${rangeHtml(s)}
         <span class="lact">
           <button class="ghost small" data-a="sup" aria-label="Naikkan bagian">↑</button>
           <button class="ghost small" data-a="sdown" aria-label="Turunkan bagian">↓</button>
@@ -323,36 +422,45 @@ function renderSheet() {
   redraw();
 }
 
-function refreshTimes(line) {
-  const art = document.querySelector(`[data-line="${line.id}"]`);
-  if (!art) return;
-  art.querySelector('[data-t=start]').value = fmt(line.start);
-  art.querySelector('[data-t=end]').value = fmt(line.end);
+function refreshTimes(o) {
+  const el = document.querySelector(`[data-range="${o.id}"]`);
+  if (!el) return;
+  el.querySelector('[data-t=start]').value = fmt(o.start);
+  el.querySelector('[data-t=end]').value = fmt(o.end);
+  el.classList.toggle('has-range', o.start != null);
 }
 
 function setActive(id) {
   if (state.activeId === id) return;
   state.activeId = id;
-  document.querySelectorAll('.line.active').forEach((a) => a.classList.remove('active'));
-  document.querySelector(`[data-line="${id}"]`)?.classList.add('active');
+  document.querySelectorAll('[data-range].active').forEach((a) => a.classList.remove('active'));
+  document.querySelector(`[data-range="${id}"]`)?.classList.add('active');
   updateActiveLabel();
   redraw();
 }
 
 function updateActiveLabel() {
-  const hit = state.activeId && findLine(state.activeId);
-  $('#active-label').textContent = hit ? `${hit.section.name || 'Bagian'} · baris ${hit.index + 1}` : 'Pilih baris untuk ditandai';
+  const t = findTarget(state.activeId);
+  $('#active-label').textContent = !t
+    ? 'Pilih bagian atau baris untuk ditandai'
+    : t.kind === 'sec'
+      ? `Bagian: ${t.obj.name || 'tanpa nama'}`
+      : `${t.section.name || 'Bagian'} · baris ${t.index + 1}`;
 }
 
 function redraw() {
-  if (player && state.song && player.duration) player.drawRegions(allLines(), state.activeId);
+  if (player && state.song && player.duration) player.drawRegions(rangeItems(), state.activeId);
 }
 
 // ---------- Event lembar ----------
 const sheetEl = $('#sheet');
 sheetEl.addEventListener('focusin', (e) => {
-  const art = e.target.closest('[data-line]');
-  if (art) setActive(art.dataset.line);
+  const r = e.target.closest('[data-range]');
+  if (r) setActive(r.dataset.range);
+});
+sheetEl.addEventListener('pointerdown', (e) => {
+  const r = e.target.closest('[data-range]');
+  if (r) setActive(r.dataset.range);
 });
 sheetEl.addEventListener('input', (e) => {
   const t = e.target;
@@ -372,15 +480,15 @@ sheetEl.addEventListener('input', (e) => {
 sheetEl.addEventListener('change', (e) => {
   const t = e.target;
   if (!t.dataset.t) return;
-  const { line } = findLine(t.closest('[data-line]').dataset.line);
+  const { obj } = findTarget(t.closest('[data-range]').dataset.range);
   const v = parseTime(t.value);
   if (v === undefined) {
     toast('Format waktu: 1:23.4 atau 83.4');
   } else {
-    line[t.dataset.t] = v;
+    obj[t.dataset.t] = v;
     markDirty();
   }
-  refreshTimes(line);
+  refreshTimes(obj);
   redraw();
 });
 sheetEl.addEventListener('click', (e) => {
@@ -390,19 +498,22 @@ sheetEl.addEventListener('click', (e) => {
   const secEl = b.closest('[data-sec]');
   const sec = secEl && sections().find((s) => s.id === secEl.dataset.sec);
   const hit = art && findLine(art.dataset.line);
-  if (art) setActive(art.dataset.line);
+  const rangeEl = b.closest('[data-range]');
+  const target = rangeEl && findTarget(rangeEl.dataset.range);
+  if (rangeEl) setActive(rangeEl.dataset.range);
   const a = b.dataset.a;
 
   if (a === 'play') {
-    const { line } = hit;
-    if (line.start == null) return toast('Tandai detik mulai dulu (tombol ⇤ Mulai atau drag di waveform).');
+    const o = target.obj;
+    if (o.start == null) return toast('Tandai detik mulai dulu (tombol ⇤ Mulai atau drag di waveform).');
     if (!player.duration) return toast('Audio belum siap.');
-    player.playRange(line.start, line.end);
+    player.playRange(o.start, o.end);
   } else if (a === 'nudge') {
     const f = b.dataset.f;
-    const base = hit.line[f] ?? player.time;
-    hit.line[f] = Math.max(0, Math.round((base + Number(b.dataset.d)) * 10) / 10);
-    refreshTimes(hit.line);
+    const o = target.obj;
+    const base = o[f] ?? player.time;
+    o[f] = Math.max(0, Math.round((base + Number(b.dataset.d)) * 10) / 10);
+    refreshTimes(o);
     redraw();
     markDirty();
   } else if (a === 'lup' || a === 'ldown') {
@@ -440,7 +551,7 @@ sheetEl.addEventListener('click', (e) => {
     const used = sec.lines.some((l) => l.chords || l.melody || l.lyrics || l.note);
     if (used && !confirm(`Hapus bagian "${sec.name}" beserta semua barisnya?`)) return;
     sections().splice(sections().indexOf(sec), 1);
-    if (!findLine(state.activeId)) state.activeId = null;
+    if (!findTarget(state.activeId)) state.activeId = null;
     renderSheet();
     markDirty();
   }
@@ -451,9 +562,9 @@ $('#add-section').addEventListener('click', () => {
   const used = new Set(sections().map((s) => s.name));
   const name = names.find((n) => !used.has(n)) || `Bagian ${sections().length + 1}`;
   const sec = newSection(name);
-  sec.lines[0].start = lastEnd();
+  sec.start = lastEnd();
   sections().push(sec);
-  state.activeId = sec.lines[0].id;
+  state.activeId = sec.id;
   renderSheet();
   const input = document.querySelector(`[data-sec="${sec.id}"] .sec-name`);
   input?.focus();
@@ -473,14 +584,27 @@ $('#zoom-in').addEventListener('click', () => player?.duration && player.zoomBy(
 $('#zoom-out').addEventListener('click', () => player?.duration && player.zoomBy(0.5));
 
 function mark(field) {
-  const hit = state.activeId && findLine(state.activeId);
-  if (!hit) return toast('Pilih (ketuk) baris dulu, baru tandai.');
+  const target = findTarget(state.activeId);
+  if (!target) return toast('Pilih (ketuk) bagian atau baris dulu, baru tandai.');
   if (!player?.duration) return toast('Audio belum siap.');
+  const o = target.obj;
   const t = Math.round(player.time * 10) / 10;
-  hit.line[field] = t;
-  if (field === 'start' && hit.line.end != null && hit.line.end <= t) hit.line.end = null;
-  if (field === 'end' && hit.line.start != null && hit.line.start >= t) return toast('Detik selesai harus setelah detik mulai.');
-  refreshTimes(hit.line);
+  if (field === 'end' && o.start != null && o.start >= t) return toast('Detik selesai harus setelah detik mulai.');
+  o[field] = t;
+  if (field === 'start' && o.end != null && o.end <= t) o.end = null;
+  refreshTimes(o);
+  // Selesai = mulai bagian/baris berikutnya → cukup satu ketukan di tiap perbatasan.
+  if (field === 'end') {
+    const next = nextTarget(target);
+    if (next) {
+      if (next.start == null) {
+        next.start = t;
+        refreshTimes(next);
+      }
+      setActive(next.id);
+      document.querySelector(`[data-range="${next.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
   redraw();
   markDirty();
 }
@@ -600,7 +724,7 @@ async function reloadSong() {
   state.song = fresh;
   state.loadedAt = fresh.updated_at;
   state.dirty = false;
-  if (!findLine(state.activeId)) state.activeId = null;
+  if (!findTarget(state.activeId)) state.activeId = null;
   setSync('saved');
   fillMeta();
   renderSheet();

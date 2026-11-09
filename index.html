@@ -44,7 +44,11 @@
       <button class="primary" id="new-song-btn">+ Lagu baru</button>
     </div>
     <form id="new-song-form" class="card stack" hidden>
-      <label>Judul <input name="title" required placeholder="mis. Kisah Kasih di Sekolah" /></label>
+      <label>Catatan chord (opsional) — paste di sini, otomatis dipecah per bagian
+        <textarea name="chordsheet" rows="5" placeholder="NASTALAYA (F)&#10;Intro:&#10;Dm… Bb…&#10;&#10;Verse:&#10;Dm Am&#10;Inikah?" spellcheck="false"></textarea>
+      </label>
+      <p class="import-preview" id="new-import-preview" hidden></p>
+      <label>Judul <input name="title" placeholder="kosongkan untuk pakai judul dari catatan" /></label>
       <label>Artis <input name="artist" placeholder="opsional" /></label>
       <label>File audio (mp3/m4a/wav, maks 50 MB) <input type="file" name="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac" required /></label>
       <div class="row">
@@ -68,6 +72,7 @@
           <details class="menu">
             <summary aria-label="Menu lagu">⋯</summary>
             <div class="menu-pop">
+              <button id="open-import">Import catatan chord</button>
               <label class="filebtn">Ganti audio<input type="file" id="replace-audio" accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac" hidden /></label>
               <button class="danger" id="delete-song">Hapus lagu</button>
             </div>
@@ -122,6 +127,21 @@
       </details>
     </div>
   </main>
+
+  <dialog id="import-dlg" class="dlg">
+    <form method="dialog" class="stack">
+      <h2>Import catatan chord</h2>
+      <label>Paste catatan dari music director
+        <textarea id="import-text" rows="10" spellcheck="false" placeholder="Intro:&#10;Dm… Bb…&#10;&#10;Verse:&#10;Dm Am&#10;Inikah?"></textarea>
+      </label>
+      <p class="import-preview" id="import-preview" hidden></p>
+      <div class="row">
+        <button value="replace" class="primary" id="import-replace" disabled>Ganti lembar</button>
+        <button value="append" id="import-append" disabled>Tambahkan di akhir</button>
+        <button value="cancel" class="ghost">Batal</button>
+      </div>
+    </form>
+  </dialog>
 
   <div id="toast" class="toast" role="status" hidden></div>
   <script type="module" src="js/app.js"></script>

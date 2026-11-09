@@ -34,11 +34,14 @@ export function createPlayer(container, { onTime, onState, onRangeEdit, onRegion
 
   ws.on('timeupdate', (t) => {
     if (range && t >= range.end) {
-      if (loop) ws.setTime(range.start);
-      else {
-        ws.pause();
-        ws.setTime(range.end);
+      // setTime() memicu timeupdate lagi secara sinkron, jadi ubah state dulu.
+      const r = range;
+      if (loop) {
+        if (t > r.start + 0.05) ws.setTime(r.start);
+      } else {
         range = null;
+        ws.pause();
+        ws.setTime(r.end);
       }
     }
     onTime?.(t);
@@ -62,12 +65,11 @@ export function createPlayer(container, { onTime, onState, onRangeEdit, onRegion
     onRangeEdit?.(activeId, round(r.start), round(r.end));
   });
   regions.on('region-updated', (r) => {
-    if (r.id === `line-${activeId}`) onRangeEdit?.(activeId, round(r.start), round(r.end));
+    if (r.id === `r-${activeId}`) onRangeEdit?.(activeId, round(r.start), round(r.end));
   });
   regions.on('region-clicked', (r, e) => {
     e.stopPropagation();
-    const id = r.id.replace(/^line-/, '');
-    onRegionClick?.(id);
+    onRegionClick?.(r.id.replace(/^r-/, ''));
   });
 
   const api = {
@@ -124,16 +126,19 @@ export function createPlayer(container, { onTime, onState, onRangeEdit, onRegion
       zoom = Math.min(400, Math.max(container.clientWidth / Math.max(api.duration, 1), base * factor));
       ws.zoom(zoom);
     },
-    // Gambar semua rentang baris; yang aktif bisa digeser/diubah ukurannya.
-    drawRegions(lines, active) {
+    // Gambar semua rentang (bagian & baris); hanya yang aktif bisa digeser/diubah ukurannya.
+    // Rentang yang tidak aktif tidak digambar agar waveform tidak penuh tumpukan.
+    drawRegions(items, active) {
       activeId = active;
       suppressCreate = true;
       regions.clearRegions();
-      for (const l of lines) {
+      for (const l of items) {
         if (l.start == null || l.end == null || l.end <= l.start) continue;
         const isActive = l.id === active;
+        if (!isActive && !l.lines) continue; // tampilkan semua bagian, baris hanya saat aktif
         regions.addRegion({
-          id: `line-${l.id}`,
+          id: `r-${l.id}`,
+          content: l.lines ? l.name : undefined,
           start: l.start,
           end: l.end,
           color: isActive ? css('--region-active') : css('--region'),
